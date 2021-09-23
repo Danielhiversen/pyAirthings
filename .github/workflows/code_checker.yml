@@ -25,7 +25,7 @@ jobs:
       - uses: actions/cache@v2
         with:
           path: ~/.cache/pip
-          key: ${{ hashFiles('requirements.txt') }}
+          key: ${{ hashFiles('setup.py') }}
       - name: Install depencency
         run: |
             pip install aiohttp async_timeout

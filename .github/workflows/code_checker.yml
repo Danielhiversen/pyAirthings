@@ -28,6 +28,7 @@ jobs:
           key: ${{ hashFiles('requirements.txt') }}
       - name: Install depencency
         run: |
+            pip install aiohttp async_timeout
             pip install dlint flake8 flake8-bandit flake8-bugbear flake8-deprecated flake8-executable isort pylint
       - name: Flake8 Code Linter
         run: |

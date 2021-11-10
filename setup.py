@@ -11,7 +11,7 @@ setup(
     packages=["airthings"],
     install_requires=install_requires,
     version="0.0.1",
-    description="A python3 library to communicate with Aws",
+    description="A python3 library to communicate with Airthings devices",
     python_requires=">=3.7.0",
     author="Daniel Hjelseth Høyer",
     author_email="github@dahoiv.net",

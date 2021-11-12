@@ -4,7 +4,7 @@ setup(
     name="airthings_cloud",
     packages=["airthings"],
     install_requires=["aiohttp>=3.0.6", "async_timeout>=3.0.0"],
-    version="0.0.1",
+    version="0.1.0",
     description="A python3 library to communicate with Airthings devices",
     python_requires=">=3.7.0",
     author="Daniel Hjelseth Høyer",

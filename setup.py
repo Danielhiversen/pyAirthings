@@ -1,15 +1,9 @@
 from setuptools import setup
 
-install_requires = [
-    "aiohttp",
-    "async_timeout"
-]
-
-
 setup(
     name="airthings_cloud",
     packages=["airthings"],
-    install_requires=install_requires,
+    install_requires=["aiohttp>=3.0.6", "async_timeout>=3.0.0"],
     version="0.0.1",
     description="A python3 library to communicate with Airthings devices",
     python_requires=">=3.7.0",

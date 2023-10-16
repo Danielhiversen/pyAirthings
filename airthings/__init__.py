@@ -16,6 +16,21 @@ TIMEOUT = 10
 
 
 @dataclass
+class AirthingsLocation:
+    """Airthings location."""
+    location_id: str
+    name: str
+
+    @classmethod
+    def init_from_response(cls, response):
+        """Class method."""
+        return cls(
+            response.get("id"),
+            response.get("name"),
+        )
+
+
+@dataclass
 class AirthingsDevice:
     """Airthings device."""
     device_id: str

@@ -34,22 +34,24 @@ class AirthingsLocation:
 class AirthingsDevice:
     """Airthings device."""
     device_id: str
-    device_type: str
     name: str
     sensors: dict[str, float | None]
     is_active: bool
     location_name: str
+    device_type: str | None
+    product_name: str | None
 
     @classmethod
-    def init_from_response(cls, response, location_name):
+    def init_from_response(cls, response, location_name, device):
         """Class method."""
         return cls(
             response.get("id"),
-            response.get("deviceType"),
             response.get("segment").get("name"),
             response.get("data"),
             response.get("segment").get("isActive"),
             location_name,
+            device.get('productName'),
+            device.get('deviceType'),
         )
 
     @property
@@ -80,6 +82,7 @@ class Airthings:
         self._websession = websession
         self._access_token = None
         self._locations = []
+        self._devices = {}
 
     async def update_devices(self):
         """Update data."""
@@ -89,6 +92,12 @@ class Airthings:
             self._locations = []
             for location in json_data.get("locations"):
                 self._locations.append(AirthingsLocation.init_from_response(location))
+        if not self._devices:
+            response = await self._request(API_URL + "devices")
+            json_data = await response.json()
+            self._devices = {}
+            for device in json_data.get("devices"):
+                self._devices[device['id']] = device
         res = {}
         for location in self._locations:
             if not location.location_id:
@@ -102,8 +111,12 @@ class Airthings:
             if json_data is None:
                 continue
             for device in json_data.get("devices"):
-                _device = AirthingsDevice.init_from_response(device, location)
-                res[device['id']] = _device
+                id = device.get('id')
+                res[id] = AirthingsDevice.init_from_response(
+                    device,
+                    location.name,
+                    self._devices.get(id)
+                )
         return res
 
     async def _request(self, url, json_data=None, retry=3):

@@ -110,13 +110,16 @@ class Airthings:
             json_data = await response.json()
             if json_data is None:
                 continue
-            for device in json_data.get("devices"):
-                id = device.get('id')
-                res[id] = AirthingsDevice.init_from_response(
-                    device,
-                    location.name,
-                    self._devices.get(id)
-                )
+            if devices := json_data.get("devices"):
+                for device in devices:
+                    id = device.get('id')
+                    res[id] = AirthingsDevice.init_from_response(
+                        device,
+                        location.name,
+                        self._devices.get(id)
+                    )
+            else:
+                _LOGGER.debug("No devices in location '%s'", location.name)
         return res
 
     async def _request(self, url, json_data=None, retry=3):

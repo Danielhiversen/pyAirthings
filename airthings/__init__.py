@@ -50,8 +50,8 @@ class AirthingsDevice:
             response.get("data"),
             response.get("segment").get("isActive"),
             location_name,
-            device.get('productName'),
             device.get('deviceType'),
+            device.get('productName'),
         )
 
     @property

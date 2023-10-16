@@ -38,16 +38,18 @@ class AirthingsDevice:
     name: str
     sensors: dict[str, float | None]
     is_active: bool
+    location_name: str
 
     @classmethod
-    def init_from_response(cls, response):
+    def init_from_response(cls, response, location_name):
         """Class method."""
         return cls(
             response.get("id"),
             response.get("deviceType"),
             response.get("segment").get("name"),
-            {sensor: None for sensor in response.get("sensors")},
+            response.get("data"),
             response.get("segment").get("isActive"),
+            location_name,
         )
 
     @property
@@ -77,30 +79,31 @@ class Airthings:
         self._secret = secret
         self._websession = websession
         self._access_token = None
-        self._devices = []
+        self._locations = []
 
     async def update_devices(self):
         """Update data."""
-        if not self._devices:
-            response = await self._request(API_URL + "devices")
+        if not self._locations:
+            response = await self._request(API_URL + "locations")
             json_data = await response.json()
-            self._devices = []
-            for dev in json_data.get("devices"):
-                self._devices.append(AirthingsDevice.init_from_response(dev))
+            self._locations = []
+            for location in json_data.get("locations"):
+                self._locations.append(AirthingsLocation.init_from_response(location))
         res = {}
-        for device in self._devices:
-            if not device.sensors:
+        for location in self._locations:
+            if not location.location_id:
                 continue
             response = await self._request(
-                API_URL + f"devices/{device.device_id}/latest-samples"
+                API_URL + f"/locations/{location.location_id}/latest-samples"
             )
             if response is None:
                 continue
             json_data = await response.json()
             if json_data is None:
                 continue
-            device.sensors = json_data.get("data")
-            res[device.device_id] = device
+            for device in json_data.get("devices"):
+                _device = AirthingsDevice.init_from_response(device, location)
+                res[device['id']] = _device
         return res
 
     async def _request(self, url, json_data=None, retry=3):

@@ -112,11 +112,11 @@ class Airthings:
                 continue
             if devices := json_data.get("devices"):
                 for device in devices:
-                    id = device.get('id')
-                    res[id] = AirthingsDevice.init_from_response(
+                    device_id = device.get('id')
+                    res[device_id] = AirthingsDevice.init_from_response(
                         device,
                         location.name,
-                        self._devices.get(id)
+                        self._devices.get(device_id)
                     )
             else:
                 _LOGGER.debug("No devices in location '%s'", location.name)

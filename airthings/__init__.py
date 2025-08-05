@@ -83,7 +83,7 @@ class Airthings:
         self._access_token = None
         self._locations = []
         self._devices = {}
-    
+
     async def _fetch_locations(self):
         response = await self._request(API_URL + "locations")
         json_data = await response.json()

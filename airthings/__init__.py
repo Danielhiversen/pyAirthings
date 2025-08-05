@@ -84,14 +84,20 @@ class Airthings:
         self._locations = []
         self._devices = {}
 
+    async def _fetch_locations(self):
+        response = await self._request(API_URL + "locations")
+        json_data = await response.json()
+        self._locations = []
+        for location in json_data.get("locations"):
+            self._locations.append(AirthingsLocation.init_from_response(location))
+
     async def update_devices(self):
         """Update data."""
+        locations_fetched = False
+
         if not self._locations:
-            response = await self._request(API_URL + "locations")
-            json_data = await response.json()
-            self._locations = []
-            for location in json_data.get("locations"):
-                self._locations.append(AirthingsLocation.init_from_response(location))
+            await self._fetch_locations()
+            locations_fetched = True
         if not self._devices:
             response = await self._request(API_URL + "devices")
             json_data = await response.json()
@@ -112,6 +118,11 @@ class Airthings:
                 continue
             if devices := json_data.get("devices"):
                 for device in devices:
+                    if not isinstance(device, dict) or 'id' not in device:
+                        if not locations_fetched:
+                            _LOGGER.debug("Device has no id, fetching locations again")
+                            await self._fetch_locations()
+                            locations_fetched = True
                     device_id = device.get('id')
                     res[device_id] = AirthingsDevice.init_from_response(
                         device,

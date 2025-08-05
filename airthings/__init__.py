@@ -123,11 +123,11 @@ class Airthings:
                             _LOGGER.debug("Device has no id, fetching locations again")
                             await self._fetch_locations()
                             locations_fetched = True
-                    id = device.get('id')
-                    res[id] = AirthingsDevice.init_from_response(
+                    device_id = device.get('id')
+                    res[device_id] = AirthingsDevice.init_from_response(
                         device,
                         location.name,
-                        self._devices.get(id)
+                        self._devices.get(device_id)
                     )
             else:
                 _LOGGER.debug("No devices in location '%s'", location.name)

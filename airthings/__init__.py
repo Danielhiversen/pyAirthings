@@ -7,7 +7,6 @@ import json
 import logging
 
 from aiohttp import ClientError
-import async_timeout
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -144,7 +143,7 @@ class Airthings:
 
         headers = {"Authorization": self._access_token}
         try:
-            async with async_timeout.timeout(TIMEOUT):
+            async with asyncio.timeout(TIMEOUT):
                 if json_data:
                     response = await self._websession.post(
                         url, json=json_data, headers=headers
@@ -179,7 +178,7 @@ class Airthings:
 async def get_token(websession, client_id, secret, retry=3, timeout=10):
     """Get token for Airthings."""
     try:
-        async with async_timeout.timeout(timeout):
+        async with asyncio.timeout(timeout):
             response = await websession.post(
                 "https://accounts-api.airthings.com/v1/token",
                 headers={

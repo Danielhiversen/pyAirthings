@@ -3,7 +3,7 @@ from setuptools import setup
 setup(
     name="airthings_cloud",
     packages=["airthings"],
-    install_requires=["aiohttp>=3.0.6", "async_timeout>=3.0.0"],
+    install_requires=["aiohttp>=3.13.0"],
     version="0.2.0",
     description="A python3 library to communicate with Airthings devices",
     python_requires=">=3.13.0",

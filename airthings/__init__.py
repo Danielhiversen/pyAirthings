@@ -94,7 +94,14 @@ class Airthings:
         response = await self._request(API_URL + "devices")
         json_data = await response.json()
         self._devices = {}
-        for device in json_data.get("devices"):
+        devices = json_data.get("devices")
+        if not isinstance(devices, list):
+            _LOGGER.debug("Missing or empty devices payload")
+            return
+        for device in devices:
+            if not isinstance(device, dict) or "id" not in device:
+                _LOGGER.debug("Skipping device metadata entry without id")
+                continue
             self._devices[device["id"]] = device
 
     async def update_devices(self, retry_on_stale_cache=True):

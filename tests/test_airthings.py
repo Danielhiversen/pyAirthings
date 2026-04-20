@@ -225,3 +225,28 @@ async def test_update_devices_recovers_when_device_metadata_is_stale() -> None:
     assert second_result["dev2"].device_id == "dev2"
     assert second_result["dev2"].product_name == "View Plus"
     assert second_result["dev2"].sensors["temp"] == 21.0
+
+
+@pytest.mark.asyncio
+async def test_fetch_devices_handles_missing_or_empty_device_entries() -> None:
+    airthings, websession = make_airthings()
+    websession.get = AsyncMock(
+        side_effect=[
+            MockResponse(json_data={"devices": None}),
+            MockResponse(
+                json_data={
+                    "devices": [
+                        {
+                            "deviceType": "WAVE_PLUS",
+                        }
+                    ]
+                }
+            ),
+        ]
+    )
+
+    await airthings._fetch_devices()
+    assert airthings._devices == {}
+
+    await airthings._fetch_devices()
+    assert airthings._devices == {}

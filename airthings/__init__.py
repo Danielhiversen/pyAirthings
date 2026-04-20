@@ -90,19 +90,19 @@ class Airthings:
         for location in json_data.get("locations"):
             self._locations.append(AirthingsLocation.init_from_response(location))
 
-    async def update_devices(self):
-        """Update data."""
-        locations_fetched = False
+    async def _fetch_devices(self):
+        response = await self._request(API_URL + "devices")
+        json_data = await response.json()
+        self._devices = {}
+        for device in json_data.get("devices"):
+            self._devices[device["id"]] = device
 
+    async def update_devices(self, retry_on_stale_cache=True):
+        """Update data."""
         if not self._locations:
             await self._fetch_locations()
-            locations_fetched = True
         if not self._devices:
-            response = await self._request(API_URL + "devices")
-            json_data = await response.json()
-            self._devices = {}
-            for device in json_data.get("devices"):
-                self._devices[device['id']] = device
+            await self._fetch_devices()
         res = {}
         for location in self._locations:
             if not location.location_id:
@@ -118,11 +118,36 @@ class Airthings:
             if devices := json_data.get("devices"):
                 for device in devices:
                     if not isinstance(device, dict) or 'id' not in device:
-                        if not locations_fetched:
-                            _LOGGER.debug("Device has no id, fetching locations again")
+                        if retry_on_stale_cache:
+                            _LOGGER.debug(
+                                "Device has no id, refreshing cached locations and devices"
+                            )
                             await self._fetch_locations()
-                            locations_fetched = True
-                    device_id = device.get('id')
+                            await self._fetch_devices()
+                            return await self.update_devices(
+                                retry_on_stale_cache=False
+                            )
+                        _LOGGER.debug(
+                            "Skipping malformed device in location '%s'", location.name
+                        )
+                        continue
+
+                    device_id = device["id"]
+                    if device_id not in self._devices:
+                        if retry_on_stale_cache:
+                            _LOGGER.debug(
+                                "Unknown device '%s', refreshing cached locations and devices",
+                                device_id,
+                            )
+                            await self._fetch_locations()
+                            await self._fetch_devices()
+                            return await self.update_devices(
+                                retry_on_stale_cache=False
+                            )
+                        _LOGGER.debug(
+                            "Skipping device '%s' missing from cached metadata", device_id
+                        )
+                        continue
                     res[device_id] = AirthingsDevice.init_from_response(
                         device,
                         location.name,

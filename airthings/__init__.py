@@ -134,9 +134,7 @@ class Airthings:
                             return await self.update_devices(
                                 retry_on_stale_cache=False
                             )
-                        _LOGGER.debug(
-                            "Skipping malformed device in location '%s'", location.name
-                        )
+                        _LOGGER.debug("Skipping device without id in location '%s'", location.name)
                         continue
 
                     device_id = device["id"]

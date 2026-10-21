@@ -11,6 +11,7 @@ jobs:
       matrix:
         python-version:
           - "3.13"
+          - "3.14"
     steps:
       - uses: actions/checkout@v6
       - name: Set up Python ${{ matrix.python-version }}
@@ -21,17 +22,20 @@ jobs:
       - uses: actions/cache@v5
         with:
           path: ~/.cache/pip
-          key: ${{ hashFiles('setup.py') }}
-      - name: Install depencency
+          key: ${{ matrix.python-version }}-${{ hashFiles('setup.py') }}
+      - name: Install dependencies
         run: |
             pip install aiohttp
-            pip install dlint flake8 flake8-bandit flake8-bugbear flake8-deprecated flake8-executable isort pylint
+            pip install dlint flake8 flake8-bandit flake8-bugbear flake8-deprecated flake8-executable isort pylint pytest pytest-asyncio pytest-cov
       - name: Flake8 Code Linter
         run: |
             flake8 airthings/ --max-line-length=120 
       - name: isort
         run: |
-            isort **/*.py
+            isort --check-only --diff --profile black --force-sort-within-sections --combine-as airthings tests
       - name: Pylint Code Linter
         run: |
             pylint --disable=C,R  --enable=unidiomatic-typecheck  airthings
+      - name: Run tests
+        run: |
+            python -m pytest -q tests --cov=airthings --cov-branch --cov-report=term-missing --cov-fail-under=100

@@ -89,32 +89,34 @@ class Airthings:
         self._locations = []
         self._devices = {}
         self._cache_updated = None
+        self._unresolved = set()
 
     async def _fetch_locations(self):
-        response = await self._request(API_URL + "locations")
-        json_data = await response.json()
+        locations = await self._fetch_list("locations")
         self._locations = [
-            AirthingsLocation.init_from_response(location)
-            for location in json_data.get("locations") or []
+            AirthingsLocation.init_from_response(location) for location in locations
         ]
 
     async def _fetch_devices(self):
-        response = await self._request(API_URL + "devices")
-        json_data = await response.json()
-        self._devices = {}
-        devices = json_data.get("devices")
-        if not isinstance(devices, list):
-            _LOGGER.debug("Missing or empty devices payload")
-            return
-        for device in devices:
+        devices = {}
+        for device in await self._fetch_list("devices"):
             if not isinstance(device, dict) or "id" not in device:
                 _LOGGER.debug("Skipping device metadata entry without id")
                 continue
-            self._devices[device["id"]] = device
+            devices[device["id"]] = device
+        self._devices = devices
+
+    async def _fetch_list(self, key):
+        response = await self._request(API_URL + key)
+        items = (await response.json() or {}).get(key)
+        if not isinstance(items, list):
+            raise AirthingsError(f"Invalid {key} response from Airthings")
+        return items
 
     async def _refresh_cache(self):
         await self._fetch_locations()
         await self._fetch_devices()
+        self._unresolved = set()
         self._cache_updated = time.monotonic()
 
     def _cache_expired(self):
@@ -130,13 +132,12 @@ class Airthings:
             await self._refresh_cache()
         res = await self._fetch_latest_samples(skip_stale=refreshed)
         if res is None:
-            _LOGGER.debug("Cached locations or devices are stale, refreshing")
             await self._refresh_cache()
             res = await self._fetch_latest_samples(skip_stale=True)
         return res
 
     async def _fetch_latest_samples(self, skip_stale):
-        """Return None if the cache is stale and skip_stale is False."""
+        """Return None on a new unknown location or device unless skip_stale."""
         res = {}
         for location in self._locations:
             if not location.location_id:
@@ -145,9 +146,15 @@ class Airthings:
                 response = await self._request(
                     API_URL + f"/locations/{location.location_id}/latest-samples"
                 )
-            except AirthingsNotFoundError:
-                if not skip_stale:
+            except AirthingsNotFoundError as err:
+                if not skip_stale and location.location_id not in self._unresolved:
+                    _LOGGER.debug(
+                        "Location '%s' is not accessible (%s), refreshing cache",
+                        location.name,
+                        err,
+                    )
                     return None
+                self._unresolved.add(location.location_id)
                 _LOGGER.debug("Skipping inaccessible location '%s'", location.name)
                 continue
             json_data = await response.json()
@@ -161,16 +168,19 @@ class Airthings:
                     continue
                 device_id = device["id"]
                 if device_id not in self._devices:
-                    if not skip_stale:
+                    if not skip_stale and device_id not in self._unresolved:
+                        _LOGGER.debug(
+                            "Unknown device '%s' in location '%s', refreshing cache",
+                            device_id,
+                            location.name,
+                        )
                         return None
-                    _LOGGER.debug(
-                        "Skipping device '%s' missing from cached metadata", device_id
-                    )
-                    continue
+                    self._unresolved.add(device_id)
+                    _LOGGER.debug("Device '%s' missing from cached metadata", device_id)
                 res[device_id] = AirthingsDevice.init_from_response(
                     device,
                     location.name,
-                    self._devices[device_id],
+                    self._devices.get(device_id, {}),
                 )
         return res
 
@@ -185,6 +195,8 @@ class Airthings:
         try:
             async with asyncio.timeout(TIMEOUT):
                 response = await self._websession.get(url, headers=headers)
+            if response.status != 200:
+                response.release()
             if response.status in (403, 404):
                 raise AirthingsNotFoundError(
                     f"No access to {url}, response: {response.status} {response.reason}"

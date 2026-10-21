@@ -92,9 +92,9 @@ class Airthings:
         self._unresolved = set()
 
     async def _fetch_locations(self):
-        locations = await self._fetch_list("locations")
-        self._locations = [
-            AirthingsLocation.init_from_response(location) for location in locations
+        return [
+            AirthingsLocation.init_from_response(location)
+            for location in await self._fetch_list("locations")
         ]
 
     async def _fetch_devices(self):
@@ -104,18 +104,21 @@ class Airthings:
                 _LOGGER.debug("Skipping device metadata entry without id")
                 continue
             devices[device["id"]] = device
-        self._devices = devices
+        return devices
 
     async def _fetch_list(self, key):
         response = await self._request(API_URL + key)
-        items = (await response.json() or {}).get(key)
+        json_data = await response.json()
+        items = json_data.get(key) if isinstance(json_data, dict) else None
         if not isinstance(items, list):
             raise AirthingsError(f"Invalid {key} response from Airthings")
         return items
 
     async def _refresh_cache(self):
-        await self._fetch_locations()
-        await self._fetch_devices()
+        locations = await self._fetch_locations()
+        devices = await self._fetch_devices()
+        self._locations = locations
+        self._devices = devices
         self._unresolved = set()
         self._cache_updated = time.monotonic()
 
@@ -158,7 +161,7 @@ class Airthings:
                 _LOGGER.debug("Skipping inaccessible location '%s'", location.name)
                 continue
             json_data = await response.json()
-            devices = (json_data or {}).get("devices")
+            devices = json_data.get("devices") if isinstance(json_data, dict) else None
             if not devices:
                 _LOGGER.debug("No devices in location '%s'", location.name)
                 continue

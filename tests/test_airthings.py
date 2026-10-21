@@ -307,17 +307,19 @@ async def test_update_devices_skips_locations_without_id_or_devices() -> None:
                         {"name": "No id"},
                         {"id": "empty", "name": "Empty"},
                         {"id": "null", "name": "Null"},
+                        {"id": "list", "name": "List"},
                     ]
                 }
             ),
             MockResponse(json_data={"devices": []}),
             MockResponse(json_data={"devices": []}),
             MockResponse(json_data=None),
+            MockResponse(json_data=["not", "a", "dict"]),
         ]
     )
 
     assert await airthings.update_devices() == {}
-    assert websession.get.await_count == 4
+    assert websession.get.await_count == 5
 
 
 @pytest.mark.asyncio
@@ -329,14 +331,15 @@ async def test_fetch_skips_device_metadata_without_id() -> None:
         )
     )
 
-    await airthings._fetch_devices()
-
-    assert set(airthings._devices) == {"dev1"}
+    assert set(await airthings._fetch_devices()) == {"dev1"}
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("endpoint", ["locations", "devices"])
-@pytest.mark.parametrize("payload", [None, {}, {"locations": None, "devices": None}, {"locations": {}, "devices": {}}])
+@pytest.mark.parametrize(
+    "payload",
+    [None, {}, {"locations": None, "devices": None}, {"locations": {}, "devices": {}}, ["x"], "text"],
+)
 async def test_update_devices_keeps_cache_on_malformed_metadata(clock, endpoint, payload) -> None:
     cloud = FakeCloud()
     airthings, websession = make_airthings(cloud)
@@ -360,6 +363,34 @@ async def test_update_devices_keeps_cache_on_malformed_metadata(clock, endpoint,
 
 
 @pytest.mark.asyncio
+async def test_update_devices_keeps_whole_cache_when_refresh_fails(clock) -> None:
+    cloud = FakeCloud()
+    airthings, websession = make_airthings(cloud)
+    await airthings.update_devices()
+    cached_locations = airthings._locations
+
+    cloud.locations["loc2"] = "Cabin"
+    cloud.devices["dev2"] = {"location": "loc1", "name": "Office", "type": "VIEW_PLUS"}
+
+    async def broken_devices(url: str, headers: dict) -> MockResponse:
+        if url == API_URL + "devices":
+            return MockResponse(json_data={"devices": None})
+        return await cloud.get(url, headers)
+
+    websession.get.side_effect = broken_devices
+    with pytest.raises(AirthingsError, match="Invalid devices"):
+        await airthings.update_devices()
+
+    assert airthings._locations is cached_locations
+
+    websession.get.side_effect = cloud.get
+    result = await airthings.update_devices()
+
+    assert set(result) == {"dev1", "dev2"}
+    assert {location.name for location in airthings._locations} == {"Home", "Cabin"}
+
+
+@pytest.mark.asyncio
 async def test_request_refreshes_token_and_retries_on_unauthorized() -> None:
     airthings, websession = make_airthings()
     websession.post = AsyncMock(side_effect=[token_response("old"), token_response("new")])
@@ -373,11 +404,14 @@ async def test_request_refreshes_token_and_retries_on_unauthorized() -> None:
 @pytest.mark.asyncio
 async def test_request_raises_after_retries_are_exhausted() -> None:
     airthings, websession = make_airthings()
-    websession.get = AsyncMock(return_value=MockResponse(status=500, reason="Server Error"))
+    response = MockResponse(status=500, reason="Server Error")
+    response.release = MagicMock()
+    websession.get = AsyncMock(return_value=response)
 
     with pytest.raises(AirthingsError, match="Server Error"):
         await airthings._request("url")
     assert websession.get.await_count == 4
+    assert response.release.call_count == 4
 
 
 @pytest.mark.asyncio

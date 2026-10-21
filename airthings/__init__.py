@@ -5,6 +5,7 @@ import asyncio
 from dataclasses import dataclass
 import json
 import logging
+import time
 
 from aiohttp import ClientError
 
@@ -12,6 +13,7 @@ _LOGGER = logging.getLogger(__name__)
 
 API_URL = "https://ext-api.airthings.com/v1/"
 TIMEOUT = 10
+CACHE_TTL = 3600
 
 
 @dataclass
@@ -71,6 +73,10 @@ class AirthingsAuthError(AirthingsError):
     """AirthingsAuthError Airthings occurred."""
 
 
+class AirthingsNotFoundError(AirthingsError):
+    """Requested resource does not exist or is no longer accessible."""
+
+
 class Airthings:
     """Airthings data handler."""
 
@@ -82,13 +88,15 @@ class Airthings:
         self._access_token = None
         self._locations = []
         self._devices = {}
+        self._cache_updated = None
 
     async def _fetch_locations(self):
         response = await self._request(API_URL + "locations")
         json_data = await response.json()
-        self._locations = []
-        for location in json_data.get("locations"):
-            self._locations.append(AirthingsLocation.init_from_response(location))
+        self._locations = [
+            AirthingsLocation.init_from_response(location)
+            for location in json_data.get("locations") or []
+        ]
 
     async def _fetch_devices(self):
         response = await self._request(API_URL + "devices")
@@ -104,86 +112,87 @@ class Airthings:
                 continue
             self._devices[device["id"]] = device
 
-    async def update_devices(self, retry_on_stale_cache=True):
+    async def _refresh_cache(self):
+        await self._fetch_locations()
+        await self._fetch_devices()
+        self._cache_updated = time.monotonic()
+
+    def _cache_expired(self):
+        return (
+            self._cache_updated is None
+            or time.monotonic() - self._cache_updated > CACHE_TTL
+        )
+
+    async def update_devices(self):
         """Update data."""
-        if not self._locations:
-            await self._fetch_locations()
-        if not self._devices:
-            await self._fetch_devices()
+        refreshed = self._cache_expired()
+        if refreshed:
+            await self._refresh_cache()
+        res = await self._fetch_latest_samples(skip_stale=refreshed)
+        if res is None:
+            _LOGGER.debug("Cached locations or devices are stale, refreshing")
+            await self._refresh_cache()
+            res = await self._fetch_latest_samples(skip_stale=True)
+        return res
+
+    async def _fetch_latest_samples(self, skip_stale):
+        """Return None if the cache is stale and skip_stale is False."""
         res = {}
         for location in self._locations:
             if not location.location_id:
                 continue
-            response = await self._request(
-                API_URL + f"/locations/{location.location_id}/latest-samples"
-            )
-            if response is None:
+            try:
+                response = await self._request(
+                    API_URL + f"/locations/{location.location_id}/latest-samples"
+                )
+            except AirthingsNotFoundError:
+                if not skip_stale:
+                    return None
+                _LOGGER.debug("Skipping inaccessible location '%s'", location.name)
                 continue
             json_data = await response.json()
-            if json_data is None:
-                continue
-            if devices := json_data.get("devices"):
-                for device in devices:
-                    if not isinstance(device, dict) or 'id' not in device:
-                        if retry_on_stale_cache:
-                            _LOGGER.debug(
-                                "Device has no id, refreshing cached locations and devices"
-                            )
-                            await self._fetch_locations()
-                            await self._fetch_devices()
-                            return await self.update_devices(
-                                retry_on_stale_cache=False
-                            )
-                        _LOGGER.debug("Skipping device without id in location '%s'", location.name)
-                        continue
-
-                    device_id = device["id"]
-                    if device_id not in self._devices:
-                        if retry_on_stale_cache:
-                            _LOGGER.debug(
-                                "Unknown device '%s', refreshing cached locations and devices",
-                                device_id,
-                            )
-                            await self._fetch_locations()
-                            await self._fetch_devices()
-                            return await self.update_devices(
-                                retry_on_stale_cache=False
-                            )
-                        _LOGGER.debug(
-                            "Skipping device '%s' missing from cached metadata", device_id
-                        )
-                        continue
-                    res[device_id] = AirthingsDevice.init_from_response(
-                        device,
-                        location.name,
-                        self._devices.get(device_id)
-                    )
-            else:
+            devices = (json_data or {}).get("devices")
+            if not devices:
                 _LOGGER.debug("No devices in location '%s'", location.name)
+                continue
+            for device in devices:
+                if not isinstance(device, dict) or "id" not in device:
+                    _LOGGER.debug("Skipping device without id in location '%s'", location.name)
+                    continue
+                device_id = device["id"]
+                if device_id not in self._devices:
+                    if not skip_stale:
+                        return None
+                    _LOGGER.debug(
+                        "Skipping device '%s' missing from cached metadata", device_id
+                    )
+                    continue
+                res[device_id] = AirthingsDevice.init_from_response(
+                    device,
+                    location.name,
+                    self._devices[device_id],
+                )
         return res
 
-    async def _request(self, url, json_data=None, retry=3):
-        _LOGGER.debug("Request %s %s, %s", url, retry, json_data)
+    async def _request(self, url, retry=3):
+        _LOGGER.debug("Request %s %s", url, retry)
         if self._access_token is None:
             self._access_token = await get_token(
                 self._websession, self._client_id, self._secret
             )
-            if self._access_token is None:
-                return None
 
         headers = {"Authorization": self._access_token}
         try:
             async with asyncio.timeout(TIMEOUT):
-                if json_data:
-                    response = await self._websession.post(
-                        url, json=json_data, headers=headers
-                    )
-                else:
-                    response = await self._websession.get(url, headers=headers)
+                response = await self._websession.get(url, headers=headers)
+            if response.status in (403, 404):
+                raise AirthingsNotFoundError(
+                    f"No access to {url}, response: {response.status} {response.reason}"
+                )
             if response.status != 200:
                 if retry > 0 and response.status != 429:
                     self._access_token = None
-                    return await self._request(url, json_data, retry=retry - 1)
+                    return await self._request(url, retry=retry - 1)
                 _LOGGER.error(
                     "Error connecting to Airthings, response: %s %s",
                     response.status,
@@ -199,7 +208,7 @@ class Airthings:
         except asyncio.TimeoutError as err:
             self._access_token = None
             if retry > 0:
-                return await self._request(url, json_data, retry=retry - 1)
+                return await self._request(url, retry=retry - 1)
             _LOGGER.error("Timed out when connecting to Airthings")
             raise AirthingsError from err
         return response
@@ -239,4 +248,8 @@ async def get_token(websession, client_id, secret, retry=3, timeout=10):
         )
         raise AirthingsAuthError(f"Failed to login to retrieve token {response.reason}")
     token_data = json.loads(await response.text())
-    return token_data.get("access_token")
+    access_token = token_data.get("access_token")
+    if not access_token:
+        _LOGGER.error("Airthings: Token response did not contain an access token")
+        raise AirthingsAuthError("Token response did not contain an access token")
+    return access_token

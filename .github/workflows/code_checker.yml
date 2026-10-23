@@ -26,7 +26,7 @@ jobs:
       - name: Install dependencies
         run: |
             pip install aiohttp
-            pip install dlint flake8 flake8-bandit flake8-bugbear flake8-deprecated flake8-executable isort pylint pytest pytest-asyncio pytest-cov
+            pip install dlint flake8 flake8-bandit flake8-bugbear flake8-deprecated flake8-executable isort pylint pytest pytest-asyncio pytest-cov syrupy
       - name: Flake8 Code Linter
         run: |
             flake8 airthings/ --max-line-length=120 

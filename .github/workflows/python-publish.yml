@@ -1,5 +1,4 @@
 # Publish releases using PyPI Trusted Publishing and PEP 740 attestations.
-# See README.md for the required PyPI publisher configuration.
 name: Upload Python Package
 
 on:

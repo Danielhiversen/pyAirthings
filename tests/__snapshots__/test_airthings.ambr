@@ -8,6 +8,7 @@
       location_name='Home',
       name='Wave',
       product_name='Wave',
+      recorded=datetime.datetime(2026, 10, 22, 11, 12, 8, tzinfo=datetime.timezone.utc),
       sensors=dict({
         'battery': 37,
         'humidity': 28.0,
@@ -22,6 +23,7 @@
       location_name='Home',
       name='Wave Mini',
       product_name='Wave Mini',
+      recorded=datetime.datetime(2026, 10, 22, 11, 12, 8, tzinfo=datetime.timezone.utc),
       sensors=dict({
         'battery': 0,
         'humidity': 52.0,
@@ -37,6 +39,7 @@
       location_name='Home',
       name='Wave Plus',
       product_name='Wave Plus',
+      recorded=datetime.datetime(2026, 10, 22, 11, 12, 8, tzinfo=datetime.timezone.utc),
       sensors=dict({
         'battery': 77,
         'co2': 885.0,
@@ -54,6 +57,7 @@
       location_name='',
       name='Wave Gen2',
       product_name='Wave',
+      recorded=datetime.datetime(2026, 10, 22, 11, 12, 8, tzinfo=datetime.timezone.utc),
       sensors=dict({
         'battery': 100,
         'humidity': 76.0,
@@ -68,6 +72,7 @@
       location_name='Home',
       name='View Plus',
       product_name='View Plus',
+      recorded=datetime.datetime(2026, 10, 22, 11, 12, 8, tzinfo=datetime.timezone.utc),
       sensors=dict({
         'battery': 0,
         'co2': 531.0,
@@ -87,6 +92,7 @@
       location_name='Home',
       name='View Pollution',
       product_name='View Pollution',
+      recorded=datetime.datetime(2026, 10, 22, 11, 12, 8, tzinfo=datetime.timezone.utc),
       sensors=dict({
         'battery': 50,
         'humidity': 42.0,
@@ -102,6 +108,7 @@
       location_name='Home',
       name='Wave Enhance',
       product_name='Wave Enhance',
+      recorded=datetime.datetime(2026, 10, 22, 11, 12, 8, tzinfo=datetime.timezone.utc),
       sensors=dict({
         'battery': 77,
         'co2': 697.0,
@@ -120,6 +127,7 @@
       location_name='Home',
       name='Raven Radon',
       product_name='Corentium Home 2',
+      recorded=datetime.datetime(2026, 10, 22, 11, 12, 8, tzinfo=datetime.timezone.utc),
       sensors=dict({
         'battery': 62,
         'humidity': 41.0,
@@ -135,6 +143,7 @@
       location_name='Home',
       name='Ap 1',
       product_name='Renew air purifier',
+      recorded=datetime.datetime(2026, 10, 22, 11, 12, 8, tzinfo=datetime.timezone.utc),
       sensors=dict({
         'pm25': 1.0,
       }),

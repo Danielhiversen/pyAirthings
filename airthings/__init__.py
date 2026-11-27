@@ -11,9 +11,10 @@ from aiohttp import ClientError
 
 _LOGGER = logging.getLogger(__name__)
 
-API_URL = "https://ext-api.airthings.com/v1/"
+API_URL = "https://consumer-api.airthings.com/v1/"
 TIMEOUT = 10
 CACHE_TTL = 3600
+MAX_PAGES = 100
 
 
 @dataclass
@@ -44,15 +45,22 @@ class AirthingsDevice:
 
     @classmethod
     def init_from_response(cls, response, location_name, device):
-        """Class method."""
+        """Create a device from a sensors result and its device metadata."""
+        serial_number = response["serialNumber"]
+        sensors = {}
+        for sensor in response.get("sensors") or []:
+            if isinstance(sensor, dict) and sensor.get("sensorType"):
+                sensors[sensor["sensorType"]] = sensor.get("value")
+        if response.get("batteryPercentage") is not None:
+            sensors["battery"] = response["batteryPercentage"]
         return cls(
-            response.get("id"),
-            response.get("segment").get("name"),
-            response.get("data"),
-            response.get("segment").get("isActive"),
+            serial_number,
+            device.get("name") or serial_number,
+            sensors,
+            True,
             location_name,
-            device.get('deviceType'),
-            device.get('productName'),
+            device.get("type"),
+            device.get("productName"),
         )
 
     @property
@@ -86,40 +94,77 @@ class Airthings:
         self._secret = secret
         self._websession = websession
         self._access_token = None
-        self._locations = []
-        self._devices = {}
+        self._accounts: list[str] = []
+        self._devices: dict[str, dict[str, dict]] = {}
         self._cache_updated = None
-        self._unresolved = set()
+        self._unresolved_accounts: set[str] = set()
+        self._unresolved_devices: set[tuple[str, str]] = set()
 
-    async def _fetch_locations(self):
-        return [
-            AirthingsLocation.init_from_response(location)
-            for location in await self._fetch_list("locations")
-        ]
-
-    async def _fetch_devices(self):
-        devices = {}
-        for device in await self._fetch_list("devices"):
-            if not isinstance(device, dict) or "id" not in device:
-                _LOGGER.debug("Skipping device metadata entry without id")
-                continue
-            devices[device["id"]] = device
-        return devices
-
-    async def _fetch_list(self, key):
-        response = await self._request(API_URL + key)
+    async def _fetch_list(self, path, key):
+        response = await self._request(f"{API_URL}{path}?_={time.time_ns()}")
         json_data = await response.json()
         items = json_data.get(key) if isinstance(json_data, dict) else None
         if not isinstance(items, list):
             raise AirthingsError(f"Invalid {key} response from Airthings")
         return items
 
+    async def _fetch_accounts(self):
+        items = await self._fetch_list("accounts", "accounts")
+        accounts = []
+        for account in items:
+            if not isinstance(account, dict) or not account.get("id"):
+                _LOGGER.debug("Skipping account without id")
+                continue
+            accounts.append(account["id"])
+        if items and not accounts:
+            raise AirthingsError("Invalid accounts response from Airthings")
+        return accounts
+
+    async def _fetch_devices(self, account_id):
+        devices = {}
+        for device in await self._fetch_list(f"accounts/{account_id}/devices", "devices"):
+            if not isinstance(device, dict) or not device.get("serialNumber"):
+                _LOGGER.debug("Skipping device metadata entry without serial number")
+                continue
+            devices[device["serialNumber"]] = device
+        return devices
+
+    async def _fetch_sensors(self, account_id):
+        samples = {}
+        for page in range(1, MAX_PAGES + 1):
+            response = await self._request(
+                API_URL + f"accounts/{account_id}/sensors?unit=metric&pageNumber={page}"
+            )
+            json_data = await response.json()
+            results = json_data.get("results") if isinstance(json_data, dict) else None
+            if not isinstance(results, list):
+                raise AirthingsError("Invalid sensors response from Airthings")
+            for result in results:
+                if not isinstance(result, dict) or not result.get("serialNumber"):
+                    _LOGGER.debug("Skipping sensors result without serial number")
+                    continue
+                samples[result["serialNumber"]] = result
+            if json_data.get("hasNext") is not True or not results:
+                return samples
+        raise AirthingsError(f"More than {MAX_PAGES} pages of sensors from Airthings")
+
     async def _refresh_cache(self):
-        locations = await self._fetch_locations()
-        devices = await self._fetch_devices()
-        self._locations = locations
+        accounts = await self._fetch_accounts()
+        devices = {}
+        accessible = []
+        for account_id in accounts:
+            try:
+                devices[account_id] = await self._fetch_devices(account_id)
+            except AirthingsNotFoundError:
+                _LOGGER.debug("Skipping account without access to its devices")
+                continue
+            accessible.append(account_id)
+        if accounts and not accessible:
+            raise AirthingsError("No accessible Airthings account")
+        self._accounts = accessible
         self._devices = devices
-        self._unresolved = set()
+        self._unresolved_accounts = set()
+        self._unresolved_devices = set()
         self._cache_updated = time.monotonic()
 
     def _cache_expired(self):
@@ -140,51 +185,37 @@ class Airthings:
         return res
 
     async def _fetch_latest_samples(self, skip_stale):
-        """Return None on a new unknown location or device unless skip_stale."""
+        """Return None on a new unknown device or inaccessible account unless skip_stale."""
         res = {}
-        for location in self._locations:
-            if not location.location_id:
-                continue
+        accounts, devices = self._accounts, self._devices
+        inaccessible = 0
+        for account_id in accounts:
             try:
-                response = await self._request(
-                    API_URL + f"/locations/{location.location_id}/latest-samples"
-                )
+                samples = await self._fetch_sensors(account_id)
             except AirthingsNotFoundError as err:
-                if not skip_stale and location.location_id not in self._unresolved:
-                    _LOGGER.debug(
-                        "Location '%s' is not accessible (%s), refreshing cache",
-                        location.name,
-                        err,
-                    )
+                if not skip_stale and account_id not in self._unresolved_accounts:
+                    _LOGGER.debug("Account is not accessible (%s), refreshing cache", err)
                     return None
-                self._unresolved.add(location.location_id)
-                _LOGGER.debug("Skipping inaccessible location '%s'", location.name)
+                self._unresolved_accounts.add(account_id)
+                _LOGGER.debug("Skipping inaccessible account")
+                inaccessible += 1
                 continue
-            json_data = await response.json()
-            devices = json_data.get("devices") if isinstance(json_data, dict) else None
-            if not devices:
-                _LOGGER.debug("No devices in location '%s'", location.name)
-                continue
-            for device in devices:
-                if not isinstance(device, dict) or "id" not in device:
-                    _LOGGER.debug("Skipping device without id in location '%s'", location.name)
-                    continue
-                device_id = device["id"]
-                if device_id not in self._devices:
-                    if not skip_stale and device_id not in self._unresolved:
-                        _LOGGER.debug(
-                            "Unknown device '%s' in location '%s', refreshing cache",
-                            device_id,
-                            location.name,
-                        )
+            for serial_number, sample in samples.items():
+                device = devices[account_id].get(serial_number)
+                if device is None:
+                    if not skip_stale and (account_id, serial_number) not in self._unresolved_devices:
+                        _LOGGER.debug("Unknown device '%s', refreshing cache", serial_number)
                         return None
-                    self._unresolved.add(device_id)
-                    _LOGGER.debug("Device '%s' missing from cached metadata", device_id)
-                res[device_id] = AirthingsDevice.init_from_response(
-                    device,
-                    location.name,
-                    self._devices.get(device_id, {}),
+                    self._unresolved_devices.add((account_id, serial_number))
+                    _LOGGER.debug("Skipping device '%s' missing from the device list", serial_number)
+                    continue
+                if device.get("sensors") == []:
+                    continue
+                res[serial_number] = AirthingsDevice.init_from_response(
+                    sample, device.get("home") or "", device
                 )
+        if accounts and inaccessible == len(accounts):
+            raise AirthingsError("No accessible Airthings account")
         return res
 
     async def _request(self, url, retry=3):
@@ -194,7 +225,7 @@ class Airthings:
                 self._websession, self._client_id, self._secret
             )
 
-        headers = {"Authorization": self._access_token}
+        headers = {"Authorization": f"Bearer {self._access_token}"}
         try:
             async with asyncio.timeout(TIMEOUT):
                 response = await self._websession.get(url, headers=headers)

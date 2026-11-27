@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
+from urllib.parse import parse_qs, urlsplit
 
 from aiohttp import ClientError
 import pytest
@@ -13,7 +15,9 @@ from airthings import (
     Airthings,
     AirthingsAuthError,
     AirthingsConnectionError,
+    AirthingsDevice,
     AirthingsError,
+    AirthingsLocation,
     AirthingsNotFoundError,
     get_token,
 )
@@ -23,7 +27,7 @@ class MockResponse:
     def __init__(
         self,
         *,
-        json_data: dict | None = None,
+        json_data: dict | list | None = None,
         text_data: str | None = None,
         status: int = 200,
         reason: str = "OK",
@@ -34,7 +38,7 @@ class MockResponse:
         self.reason = reason
         self.released = False
 
-    async def json(self) -> dict | None:
+    async def json(self) -> dict | list | None:
         return self._json_data
 
     async def text(self) -> str:
@@ -48,50 +52,81 @@ def token_response(token: str = "token") -> MockResponse:
     return MockResponse(text_data=json.dumps({"access_token": token}))
 
 
-PRODUCT_NAMES = {"WAVE_PLUS": "Wave Plus", "VIEW_PLUS": "View Plus"}
+def endpoint(url: str) -> str:
+    return urlsplit(url).path.rsplit("/", 1)[-1]
 
 
 class FakeCloud:
-    """In-memory ext-api account that routes GET requests by URL."""
+    """In-memory Consumer API that routes GET requests by URL."""
 
     def __init__(self) -> None:
-        self.locations = {"loc1": "Home"}
-        self.devices = {"dev1": {"location": "loc1", "name": "Kitchen", "type": "WAVE_PLUS"}}
-        self.extra_samples: dict[str, list] = {}
-        self.forbidden: set[str] = set()
+        self.accounts = ["acc1"]
+        self.devices = {
+            "2930000001": {
+                "account": "acc1",
+                "name": "Kitchen",
+                "home": "Home",
+                "type": "WAVE_PLUS",
+                "productName": "Wave Plus",
+            },
+        }
+        self.unlisted: set[str] = set()
+        self.unsampled: set[str] = set()
+        self.forbidden_sensors: set[str] = set()
+        self.forbidden_devices: set[str] = set()
+        self.page_size = 50
         self.urls: list[str] = []
+
+    def result(self, serial: str) -> dict:
+        return {
+            "serialNumber": serial,
+            "recorded": "2026-10-22T11:12:08",
+            "batteryPercentage": 77,
+            "sensors": [{"sensorType": "temp", "value": 20.5, "unit": "c"}],
+        }
 
     async def get(self, url: str, headers: dict) -> MockResponse:
         self.urls.append(url)
-        if url == API_URL + "locations":
-            return MockResponse(
-                json_data={"locations": [{"id": i, "name": n} for i, n in self.locations.items()]}
-            )
-        if url == API_URL + "devices":
+        parts = urlsplit(url)
+        path = parts.path.removeprefix(urlsplit(API_URL).path).split("/")
+        query = parse_qs(parts.query)
+        if path == ["accounts"]:
+            assert "_" in query
+            return MockResponse(json_data={"accounts": [{"id": a} for a in self.accounts]})
+        account_id = path[1]
+        serials = [s for s, d in self.devices.items() if d["account"] == account_id]
+        if path[2] == "devices":
+            assert "_" in query
+            if account_id in self.forbidden_devices:
+                return MockResponse(status=403, reason="Forbidden")
             return MockResponse(
                 json_data={
                     "devices": [
-                        {"id": i, "deviceType": d["type"], "productName": PRODUCT_NAMES[d["type"]]}
-                        for i, d in self.devices.items()
+                        {
+                            "serialNumber": s,
+                            "name": self.devices[s]["name"],
+                            "home": self.devices[s]["home"],
+                            "type": self.devices[s]["type"],
+                            "productName": self.devices[s]["productName"],
+                            "sensors": ["temp"],
+                        }
+                        for s in serials
+                        if s not in self.unlisted
                     ]
                 }
             )
-        location_id = url.split("/locations/")[1].split("/")[0]
-        if location_id not in self.locations or location_id in self.forbidden:
+        assert query["unit"] == ["metric"]
+        if account_id in self.forbidden_sensors:
             return MockResponse(status=403, reason="Forbidden")
-        samples = [
-            {
-                "id": i,
-                "segment": {"name": d["name"], "isActive": True},
-                "data": {"temp": 20.0},
-            }
-            for i, d in self.devices.items()
-            if d["location"] == location_id
-        ]
-        return MockResponse(json_data={"devices": samples + self.extra_samples.get(location_id, [])})
+        page = int(query["pageNumber"][0])
+        results = [self.result(s) for s in serials if s not in self.unsampled]
+        chunk = results[(page - 1) * self.page_size : page * self.page_size]
+        return MockResponse(
+            json_data={"results": chunk, "hasNext": page * self.page_size < len(results)}
+        )
 
-    def count(self, suffix: str) -> int:
-        return sum(url.endswith(suffix) for url in self.urls)
+    def count(self, part: str) -> int:
+        return sum(part in url for url in self.urls)
 
 
 def make_airthings(cloud: FakeCloud | None = None) -> tuple[Airthings, MagicMock]:
@@ -100,6 +135,16 @@ def make_airthings(cloud: FakeCloud | None = None) -> tuple[Airthings, MagicMock
     if cloud is not None:
         websession.get = AsyncMock(side_effect=cloud.get)
     return Airthings("client_id", "secret", websession), websession
+
+
+def add_device(cloud: FakeCloud, serial: str, account: str = "acc1", **fields: str | None) -> None:
+    cloud.devices[serial] = {
+        "account": account,
+        "name": "Basement",
+        "home": "Home",
+        "type": "WAVE_GEN2",
+        "productName": "Wave",
+    } | fields
 
 
 @pytest.fixture
@@ -114,18 +159,43 @@ async def test_update_devices_returns_device_data() -> None:
     cloud = FakeCloud()
     airthings, websession = make_airthings(cloud)
 
-    result = await airthings.update_devices()
+    with patch("airthings.time.time_ns", return_value=42):
+        result = await airthings.update_devices()
 
-    device = result["dev1"]
-    assert device.device_id == "dev1"
-    assert device.name == "Kitchen"
-    assert device.sensors == {"temp": 20.0}
-    assert list(device.sensor_types) == ["temp"]
-    assert device.is_active is True
-    assert device.location_name == "Home"
-    assert device.device_type == "WAVE_PLUS"
-    assert device.product_name == "Wave Plus"
-    websession.get.assert_any_call(API_URL + "locations", headers={"Authorization": "token"})
+    assert result == {
+        "2930000001": AirthingsDevice(
+            device_id="2930000001",
+            name="Kitchen",
+            sensors={"temp": 20.5, "battery": 77},
+            is_active=True,
+            location_name="Home",
+            device_type="WAVE_PLUS",
+            product_name="Wave Plus",
+        )
+    }
+    assert list(result["2930000001"].sensor_types) == ["temp", "battery"]
+    assert websession.get.await_args.kwargs["headers"] == {"Authorization": "Bearer token"}
+    assert cloud.urls == [
+        API_URL + "accounts?_=42",
+        API_URL + "accounts/acc1/devices?_=42",
+        API_URL + "accounts/acc1/sensors?unit=metric&pageNumber=1",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_update_devices_bypasses_cached_device_list_on_every_refresh(clock) -> None:
+    cloud = FakeCloud()
+    airthings, _ = make_airthings(cloud)
+
+    with patch("airthings.time.time_ns", side_effect=[1, 2, 3, 4]):
+        await airthings.update_devices()
+        clock[0] += CACHE_TTL + 1
+        await airthings.update_devices()
+
+    assert [url for url in cloud.urls if "/devices" in url] == [
+        API_URL + "accounts/acc1/devices?_=2",
+        API_URL + "accounts/acc1/devices?_=4",
+    ]
 
 
 @pytest.mark.asyncio
@@ -134,11 +204,11 @@ async def test_update_devices_reuses_cache_and_token(clock) -> None:
     airthings, websession = make_airthings(cloud)
 
     await airthings.update_devices()
+    cloud.urls.clear()
+    clock[0] += CACHE_TTL
     await airthings.update_devices()
 
-    assert cloud.count("/locations") == 1
-    assert cloud.count("/devices") == 1
-    assert cloud.count("/latest-samples") == 2
+    assert cloud.urls == [API_URL + "accounts/acc1/sensors?unit=metric&pageNumber=1"]
     assert websession.post.await_count == 1
 
 
@@ -146,21 +216,29 @@ async def test_update_devices_reuses_cache_and_token(clock) -> None:
 async def test_update_devices_refreshes_cache_after_ttl(clock) -> None:
     cloud = FakeCloud()
     airthings, _ = make_airthings(cloud)
+
     await airthings.update_devices()
-
-    cloud.locations["loc1"] = "Renamed"
-    cloud.locations["loc2"] = "Cabin"
-    cloud.devices["dev2"] = {"location": "loc2", "name": "Office", "type": "VIEW_PLUS"}
-    clock[0] += CACHE_TTL
+    cloud.devices["2930000001"] |= {"name": "Renamed", "home": "Cabin"}
+    clock[0] += CACHE_TTL + 1
     result = await airthings.update_devices()
-    assert "dev2" not in result
-    assert result["dev1"].location_name == "Home"
 
-    clock[0] += 1
+    assert result["2930000001"].name == "Renamed"
+    assert result["2930000001"].location_name == "Cabin"
+    assert cloud.count("/devices") == 2
+
+
+@pytest.mark.asyncio
+async def test_update_devices_combines_accounts() -> None:
+    cloud = FakeCloud()
+    cloud.accounts = ["acc1", "acc2"]
+    add_device(cloud, "2960000002", "acc2", name="Office", home=None, type="VIEW_PLUS", productName="View Plus")
+    airthings, _ = make_airthings(cloud)
+
     result = await airthings.update_devices()
-    assert result["dev1"].location_name == "Renamed"
-    assert result["dev2"].location_name == "Cabin"
-    assert cloud.count("/locations") == 2
+
+    assert list(result) == ["2930000001", "2960000002"]
+    assert result["2960000002"].location_name == ""
+    assert result["2960000002"].product_name == "View Plus"
 
 
 @pytest.mark.asyncio
@@ -169,197 +247,382 @@ async def test_update_devices_refreshes_when_device_is_added(clock, caplog) -> N
     airthings, _ = make_airthings(cloud)
     await airthings.update_devices()
 
-    cloud.devices["dev2"] = {"location": "loc1", "name": "Office", "type": "VIEW_PLUS"}
+    add_device(cloud, "2950000002")
     with caplog.at_level("DEBUG", logger="airthings"):
         result = await airthings.update_devices()
 
-    assert "Unknown device 'dev2' in location 'Home', refreshing cache" in caplog.text
-    assert set(result) == {"dev1", "dev2"}
-    assert result["dev2"].product_name == "View Plus"
+    assert result["2950000002"].name == "Basement"
+    assert result["2950000002"].product_name == "Wave"
     assert cloud.count("/devices") == 2
-
-    await airthings.update_devices()
-    assert cloud.count("/devices") == 2
+    assert "Unknown device '2950000002', refreshing cache" in caplog.text
 
 
 @pytest.mark.asyncio
-async def test_update_devices_refreshes_when_location_is_deleted(clock, caplog) -> None:
+async def test_update_devices_removes_deleted_device_without_refresh(clock) -> None:
     cloud = FakeCloud()
-    cloud.locations["loc2"] = "Cabin"
-    cloud.devices["dev2"] = {"location": "loc2", "name": "Office", "type": "VIEW_PLUS"}
+    add_device(cloud, "2950000002")
+    airthings, _ = make_airthings(cloud)
+    assert set(await airthings.update_devices()) == {"2930000001", "2950000002"}
+
+    del cloud.devices["2950000002"]
+    result = await airthings.update_devices()
+
+    assert set(result) == {"2930000001"}
+    assert cloud.count("/devices") == 1
+
+
+@pytest.mark.asyncio
+async def test_update_devices_skips_device_missing_from_device_list(clock, caplog) -> None:
+    cloud = FakeCloud()
     airthings, _ = make_airthings(cloud)
     await airthings.update_devices()
 
-    del cloud.locations["loc1"]
-    del cloud.devices["dev1"]
+    add_device(cloud, "2950000002")
+    cloud.unlisted = {"2950000002"}
     with caplog.at_level("DEBUG", logger="airthings"):
         result = await airthings.update_devices()
+        await airthings.update_devices()
 
-    assert "Location 'Home' is not accessible (No access to" in caplog.text
-    assert "403 Forbidden), refreshing cache" in caplog.text
-
-    assert set(result) == {"dev2"}
-    assert cloud.count("/locations") == 2
-    assert cloud.count("/loc1/latest-samples") == 2
-
-    await airthings.update_devices()
-    assert cloud.count("/loc1/latest-samples") == 2
-
-
-@pytest.mark.asyncio
-async def test_update_devices_removes_deleted_device(clock) -> None:
-    cloud = FakeCloud()
-    cloud.devices["dev2"] = {"location": "loc1", "name": "Office", "type": "VIEW_PLUS"}
-    airthings, _ = make_airthings(cloud)
-    await airthings.update_devices()
-
-    del cloud.devices["dev2"]
-    result = await airthings.update_devices()
-
-    assert set(result) == {"dev1"}
-    assert cloud.count("/locations") == 1
-
-
-@pytest.mark.asyncio
-async def test_update_devices_skips_location_still_inaccessible_after_refresh(clock) -> None:
-    cloud = FakeCloud()
-    cloud.locations["loc2"] = "Cabin"
-    cloud.devices["dev2"] = {"location": "loc2", "name": "Office", "type": "VIEW_PLUS"}
-    airthings, _ = make_airthings(cloud)
-    await airthings.update_devices()
-
-    cloud.forbidden.add("loc1")
-    result = await airthings.update_devices()
-
-    assert set(result) == {"dev2"}
-    assert cloud.count("/locations") == 2
-
-    result = await airthings.update_devices()
-
-    assert set(result) == {"dev2"}
-    assert cloud.count("/locations") == 2
-
-    clock[0] += CACHE_TTL + 1
-    await airthings.update_devices()
-    assert cloud.count("/locations") == 3
-
-
-@pytest.mark.asyncio
-async def test_update_devices_skips_inaccessible_location_on_fresh_cache(clock) -> None:
-    cloud = FakeCloud()
-    cloud.forbidden.add("loc1")
-    airthings, _ = make_airthings(cloud)
-
-    result = await airthings.update_devices()
-
-    assert result == {}
-    assert cloud.count("/locations") == 1
-
-
-@pytest.mark.asyncio
-async def test_update_devices_returns_device_missing_from_metadata(clock) -> None:
-    cloud = FakeCloud()
-    airthings, _ = make_airthings(cloud)
-    await airthings.update_devices()
-
-    cloud.extra_samples["loc1"] = [{"id": "dev2", "segment": {"name": "Office"}, "data": {"co2": 500}}]
-    result = await airthings.update_devices()
-
-    assert result["dev2"].name == "Office"
-    assert result["dev2"].sensors == {"co2": 500}
-    assert result["dev2"].product_name is None
+    assert set(result) == {"2930000001"}
     assert cloud.count("/devices") == 2
+    assert "Skipping device '2950000002' missing from the device list" in caplog.text
 
-    result = await airthings.update_devices()
-
-    assert set(result) == {"dev1", "dev2"}
-    assert cloud.count("/devices") == 2
-
-    cloud.extra_samples.clear()
-    cloud.devices["dev2"] = {"location": "loc1", "name": "Office", "type": "VIEW_PLUS"}
+    cloud.unlisted = set()
     clock[0] += CACHE_TTL + 1
-    result = await airthings.update_devices()
-
-    assert result["dev2"].product_name == "View Plus"
+    assert set(await airthings.update_devices()) == {"2930000001", "2950000002"}
 
 
 @pytest.mark.asyncio
-async def test_update_devices_skips_device_without_id_without_refreshing(clock) -> None:
+async def test_update_devices_returns_device_without_readings() -> None:
     cloud = FakeCloud()
-    cloud.extra_samples["loc1"] = [{"segment": {"name": "No id"}, "data": {}}, "not a dict"]
+    airthings, websession = make_airthings(cloud)
+
+    async def without_readings(url: str, headers: dict) -> MockResponse:
+        response = await cloud.get(url, headers)
+        if endpoint(url) == "sensors":
+            response._json_data["results"][0] |= {"sensors": [], "recorded": None, "batteryPercentage": None}
+        return response
+
+    websession.get = AsyncMock(side_effect=without_readings)
+
+    device = (await airthings.update_devices())["2930000001"]
+
+    assert (device.name, device.sensors) == ("Kitchen", {})
+
+
+@pytest.mark.asyncio
+async def test_update_devices_skips_device_without_sensors(clock) -> None:
+    cloud = FakeCloud()
+    add_device(cloud, "2810000002", name="Hub", type="HUB")
+    airthings, websession = make_airthings(cloud)
+
+    async def hub_has_no_sensors(url: str, headers: dict) -> MockResponse:
+        response = await cloud.get(url, headers)
+        if endpoint(url) == "devices":
+            response._json_data["devices"][1]["sensors"] = []
+        return response
+
+    websession.get = AsyncMock(side_effect=hub_has_no_sensors)
+
+    result = await airthings.update_devices()
+    await airthings.update_devices()
+
+    assert set(result) == {"2930000001"}
+    assert cloud.count("/devices") == 1
+
+
+@pytest.mark.asyncio
+async def test_update_devices_omits_listed_device_without_sensors_result() -> None:
+    cloud = FakeCloud()
+    add_device(cloud, "2950000002")
+    cloud.unsampled = {"2950000002"}
+    airthings, _ = make_airthings(cloud)
+
+    assert set(await airthings.update_devices()) == {"2930000001"}
+    assert cloud.count("/devices") == 1
+
+
+@pytest.mark.asyncio
+async def test_update_devices_refreshes_when_account_is_inaccessible(clock, caplog) -> None:
+    cloud = FakeCloud()
+    cloud.accounts = ["acc1", "acc2"]
+    add_device(cloud, "2960000002", "acc2")
     airthings, _ = make_airthings(cloud)
     await airthings.update_devices()
 
-    result = await airthings.update_devices()
+    cloud.accounts = ["acc1"]
+    cloud.forbidden_sensors = {"acc2"}
+    with caplog.at_level("DEBUG", logger="airthings"):
+        result = await airthings.update_devices()
+    await airthings.update_devices()
 
-    assert set(result) == {"dev1"}
-    assert cloud.count("/locations") == 1
+    assert set(result) == {"2930000001"}
+    assert cloud.count("/accounts?") == 2
+    assert cloud.count("/accounts/acc2/sensors") == 2
+    assert "Account is not accessible" in caplog.text
 
 
 @pytest.mark.asyncio
-async def test_update_devices_skips_locations_without_id_or_devices() -> None:
+async def test_update_devices_skips_account_without_access_to_devices(clock) -> None:
+    cloud = FakeCloud()
+    cloud.accounts = ["acc1", "acc2"]
+    add_device(cloud, "2960000002", "acc2")
+    cloud.forbidden_devices = {"acc2"}
+    airthings, _ = make_airthings(cloud)
+
+    result = await airthings.update_devices()
+    await airthings.update_devices()
+
+    assert set(result) == {"2930000001"}
+    assert cloud.count("/accounts/acc2/sensors") == 0
+
+
+@pytest.mark.asyncio
+async def test_update_devices_skips_account_still_inaccessible_after_refresh(clock) -> None:
+    cloud = FakeCloud()
+    cloud.accounts = ["acc1", "acc2"]
+    add_device(cloud, "2960000002", "acc2")
+    airthings, _ = make_airthings(cloud)
+    await airthings.update_devices()
+
+    cloud.forbidden_sensors = {"acc2"}
+    result = await airthings.update_devices()
+    cloud.urls.clear()
+    await airthings.update_devices()
+
+    assert set(result) == {"2930000001"}
+    assert cloud.count("/devices") == 0
+    assert cloud.count("/accounts/acc2/sensors") == 1
+
+
+@pytest.mark.asyncio
+async def test_update_devices_skips_inaccessible_account_on_fresh_cache() -> None:
+    cloud = FakeCloud()
+    cloud.accounts = ["acc1", "acc2"]
+    cloud.forbidden_sensors = {"acc2"}
+    airthings, _ = make_airthings(cloud)
+
+    result = await airthings.update_devices()
+
+    assert set(result) == {"2930000001"}
+    assert cloud.count("/accounts?") == 1
+
+
+@pytest.mark.asyncio
+async def test_update_devices_raises_when_no_account_has_access_to_devices() -> None:
+    cloud = FakeCloud()
+    cloud.forbidden_devices = {"acc1"}
+    airthings, _ = make_airthings(cloud)
+
+    with pytest.raises(AirthingsError, match="No accessible Airthings account"):
+        await airthings.update_devices()
+
+    cloud.forbidden_devices = set()
+    assert set(await airthings.update_devices()) == {"2930000001"}
+
+
+@pytest.mark.asyncio
+async def test_update_devices_raises_when_no_account_has_access_to_sensors(clock) -> None:
+    cloud = FakeCloud()
+    airthings, _ = make_airthings(cloud)
+    await airthings.update_devices()
+
+    cloud.forbidden_sensors = {"acc1"}
+    for _ in range(2):
+        with pytest.raises(AirthingsError, match="No accessible Airthings account"):
+            await airthings.update_devices()
+
+    assert cloud.count("/accounts?") == 2
+    cloud.forbidden_sensors = set()
+    assert set(await airthings.update_devices()) == {"2930000001"}
+
+
+@pytest.mark.asyncio
+async def test_update_devices_follows_pages() -> None:
+    cloud = FakeCloud()
+    cloud.page_size = 1
+    add_device(cloud, "2950000002")
+    airthings, _ = make_airthings(cloud)
+
+    result = await airthings.update_devices()
+
+    assert set(result) == {"2930000001", "2950000002"}
+    assert cloud.count("pageNumber=2") == 1
+    assert cloud.count("pageNumber=3") == 0
+
+
+@pytest.mark.asyncio
+async def test_update_devices_stops_paging_on_empty_page() -> None:
     airthings, websession = make_airthings()
-    websession.get = AsyncMock(
-        side_effect=[
-            MockResponse(
-                json_data={
-                    "locations": [
-                        {"name": "No id"},
-                        {"id": "empty", "name": "Empty"},
-                        {"id": "null", "name": "Null"},
-                        {"id": "list", "name": "List"},
-                    ]
-                }
-            ),
-            MockResponse(json_data={"devices": []}),
-            MockResponse(json_data={"devices": []}),
-            MockResponse(json_data=None),
-            MockResponse(json_data=["not", "a", "dict"]),
-        ]
-    )
+    payloads = {
+        "accounts": {"accounts": [{"id": "acc1"}]},
+        "devices": {"devices": []},
+        "sensors": {"results": [], "hasNext": True},
+    }
+    websession.get = AsyncMock(side_effect=lambda url, headers: MockResponse(json_data=payloads[endpoint(url)]))
 
     assert await airthings.update_devices() == {}
-    assert websession.get.await_count == 5
+    assert websession.get.await_count == 3
 
 
 @pytest.mark.asyncio
-async def test_fetch_skips_device_metadata_without_id() -> None:
-    airthings, websession = make_airthings()
-    websession.get = AsyncMock(
-        return_value=MockResponse(
-            json_data={"devices": [{"deviceType": "WAVE_PLUS"}, "not a dict", {"id": "dev1"}]}
-        )
-    )
-
-    assert set(await airthings._fetch_devices()) == {"dev1"}
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("endpoint", ["locations", "devices"])
-@pytest.mark.parametrize(
-    "payload",
-    [None, {}, {"locations": None, "devices": None}, {"locations": {}, "devices": {}}, ["x"], "text"],
-)
-async def test_update_devices_keeps_cache_on_malformed_metadata(clock, endpoint, payload) -> None:
+async def test_update_devices_raises_when_pages_exceed_max_pages() -> None:
     cloud = FakeCloud()
+    cloud.page_size = 1
+    add_device(cloud, "2950000002")
+    airthings, _ = make_airthings(cloud)
+
+    with patch("airthings.MAX_PAGES", 1), pytest.raises(AirthingsError, match="More than 1 pages"):
+        await airthings.update_devices()
+
+    assert cloud.count("pageNumber=2") == 0
+
+
+@pytest.mark.asyncio
+async def test_update_devices_raises_when_a_later_page_fails(clock) -> None:
+    cloud = FakeCloud()
+    cloud.page_size = 1
+    add_device(cloud, "2950000002")
+    airthings, websession = make_airthings(cloud)
+    await airthings.update_devices()
+    cached = airthings._devices
+
+    async def broken_page_two(url: str, headers: dict) -> MockResponse:
+        if "pageNumber=2" in url:
+            return MockResponse(json_data={"results": None})
+        return await cloud.get(url, headers)
+
+    websession.get = AsyncMock(side_effect=broken_page_two)
+    with pytest.raises(AirthingsError, match="Invalid sensors"):
+        await airthings.update_devices()
+
+    assert airthings._devices is cached
+
+
+@pytest.mark.asyncio
+async def test_update_devices_refreshes_when_unresolved_device_moves_to_another_account(clock) -> None:
+    cloud = FakeCloud()
+    cloud.accounts = ["acc1", "acc2"]
+    airthings, _ = make_airthings(cloud)
+    await airthings.update_devices()
+
+    add_device(cloud, "2950000002")
+    cloud.unlisted = {"2950000002"}
+    assert set(await airthings.update_devices()) == {"2930000001"}
+
+    cloud.unlisted = set()
+    cloud.devices["2950000002"]["account"] = "acc2"
+    result = await airthings.update_devices()
+
+    assert set(result) == {"2930000001", "2950000002"}
+    assert cloud.count("/devices") == 6
+
+
+@pytest.mark.asyncio
+async def test_update_devices_uses_one_cache_snapshot_while_fetching(clock) -> None:
+    cloud = FakeCloud()
+    cloud.accounts = ["acc1", "acc2"]
+    add_device(cloud, "2960000002", "acc2")
     airthings, websession = make_airthings(cloud)
     await airthings.update_devices()
 
-    async def malformed(url: str, headers: dict) -> MockResponse:
-        if url == API_URL + endpoint:
+    async def cache_replaced_mid_poll(url: str, headers: dict) -> MockResponse:
+        if "/acc1/sensors" in url:
+            airthings._accounts, airthings._devices = [], {}
+        return await cloud.get(url, headers)
+
+    websession.get = AsyncMock(side_effect=cache_replaced_mid_poll)
+
+    assert set(await airthings.update_devices()) == {"2930000001", "2960000002"}
+
+
+@pytest.mark.asyncio
+async def test_update_devices_refreshes_when_device_moves_to_another_account(clock, caplog) -> None:
+    cloud = FakeCloud()
+    cloud.accounts = ["acc1", "acc2"]
+    airthings, _ = make_airthings(cloud)
+    await airthings.update_devices()
+
+    cloud.devices["2930000001"] |= {"account": "acc2", "name": "Moved", "home": "Cabin"}
+    with caplog.at_level("DEBUG", logger="airthings"):
+        result = await airthings.update_devices()
+
+    assert (result["2930000001"].name, result["2930000001"].location_name) == ("Moved", "Cabin")
+    assert cloud.count("/devices") == 4
+    assert "Unknown device '2930000001', refreshing cache" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_update_devices_skips_malformed_entries(clock) -> None:
+    cloud = FakeCloud()
+    airthings, websession = make_airthings(cloud)
+
+    async def with_malformed(url: str, headers: dict) -> MockResponse:
+        response = await cloud.get(url, headers)
+        data = response._json_data
+        name = endpoint(url)
+        if name == "accounts":
+            data["accounts"] += ["acc2", {"name": "no id"}]
+        elif name == "devices":
+            data["devices"] += ["2950000002", {"name": "no serial"}]
+        else:
+            data["results"] += [None, {"sensors": []}]
+            data["results"][0]["sensors"] += [None, {"value": 1.0}, {"sensorType": "co2", "value": None}]
+        return response
+
+    websession.get = AsyncMock(side_effect=with_malformed)
+
+    result = await airthings.update_devices()
+    await airthings.update_devices()
+
+    assert list(result) == ["2930000001"]
+    assert result["2930000001"].sensors == {"temp": 20.5, "co2": None, "battery": 77}
+    assert cloud.count("/devices") == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("name", "payload", "error"),
+    [
+        ("accounts", [], "Invalid accounts"),
+        ("accounts", {"accounts": None}, "Invalid accounts"),
+        ("accounts", {"accounts": [{"name": "no id"}]}, "Invalid accounts"),
+        ("devices", {"devices": {}}, "Invalid devices"),
+    ],
+)
+async def test_update_devices_keeps_cache_on_malformed_metadata(clock, name, payload, error) -> None:
+    cloud = FakeCloud()
+    airthings, websession = make_airthings(cloud)
+    await airthings.update_devices()
+    cached = airthings._devices
+
+    async def broken(url: str, headers: dict) -> MockResponse:
+        if endpoint(url) == name:
             return MockResponse(json_data=payload)
         return await cloud.get(url, headers)
 
-    websession.get.side_effect = malformed
+    websession.get = AsyncMock(side_effect=broken)
     clock[0] += CACHE_TTL + 1
-
-    with pytest.raises(AirthingsError, match=f"Invalid {endpoint}"):
+    with pytest.raises(AirthingsError, match=error):
         await airthings.update_devices()
 
-    websession.get.side_effect = cloud.get
-    result = await airthings.update_devices()
+    assert airthings._devices is cached
 
-    assert set(result) == {"dev1"}
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("payload", [{"results": None}, []])
+async def test_update_devices_raises_on_malformed_sensors(payload) -> None:
+    cloud = FakeCloud()
+    airthings, websession = make_airthings(cloud)
+
+    async def broken(url: str, headers: dict) -> MockResponse:
+        if endpoint(url) == "sensors":
+            return MockResponse(json_data=payload)
+        return await cloud.get(url, headers)
+
+    websession.get = AsyncMock(side_effect=broken)
+    with pytest.raises(AirthingsError, match="Invalid sensors"):
+        await airthings.update_devices()
 
 
 @pytest.mark.asyncio
@@ -367,27 +630,52 @@ async def test_update_devices_keeps_whole_cache_when_refresh_fails(clock) -> Non
     cloud = FakeCloud()
     airthings, websession = make_airthings(cloud)
     await airthings.update_devices()
-    cached_locations = airthings._locations
+    cached = (airthings._accounts, airthings._devices)
 
-    cloud.locations["loc2"] = "Cabin"
-    cloud.devices["dev2"] = {"location": "loc1", "name": "Office", "type": "VIEW_PLUS"}
+    cloud.accounts = ["acc1", "acc2"]
 
-    async def broken_devices(url: str, headers: dict) -> MockResponse:
-        if url == API_URL + "devices":
-            return MockResponse(json_data={"devices": None})
+    async def broken_acc2(url: str, headers: dict) -> MockResponse:
+        if "/acc2/devices" in url:
+            return MockResponse(json_data={})
         return await cloud.get(url, headers)
 
-    websession.get.side_effect = broken_devices
+    websession.get = AsyncMock(side_effect=broken_acc2)
+    clock[0] += CACHE_TTL + 1
     with pytest.raises(AirthingsError, match="Invalid devices"):
         await airthings.update_devices()
 
-    assert airthings._locations is cached_locations
+    assert (airthings._accounts, airthings._devices) == cached
+    assert airthings._accounts is cached[0]
 
-    websession.get.side_effect = cloud.get
-    result = await airthings.update_devices()
 
-    assert set(result) == {"dev1", "dev2"}
-    assert {location.name for location in airthings._locations} == {"Home", "Cabin"}
+@pytest.mark.parametrize(
+    ("device", "expected"),
+    [({"productName": "Corentium Home 2"}, "Corentium Home 2"), ({}, None)],
+)
+def test_device_product_name(device: dict, expected: str | None) -> None:
+    result = AirthingsDevice.init_from_response({"serialNumber": "1"}, "", device)
+
+    assert result.product_name == expected
+
+
+def test_device_without_metadata_or_readings() -> None:
+    device = AirthingsDevice.init_from_response({"serialNumber": "1", "batteryPercentage": None}, "", {})
+
+    assert device.sensors == {}
+    assert device.name == "1"
+
+
+def test_location_init_from_response() -> None:
+    assert AirthingsLocation.init_from_response({"id": "loc", "name": "Home"}) == AirthingsLocation("loc", "Home")
+
+
+@pytest.mark.asyncio
+async def test_update_devices_maps_every_device_type(snapshot) -> None:
+    payloads = json.loads((Path(__file__).parent / "fixtures" / "account.json").read_text())
+    airthings, websession = make_airthings()
+    websession.get = AsyncMock(side_effect=lambda url, headers: MockResponse(json_data=payloads[endpoint(url)]))
+
+    assert await airthings.update_devices() == snapshot
 
 
 @pytest.mark.asyncio
@@ -398,7 +686,7 @@ async def test_request_refreshes_token_and_retries_on_unauthorized() -> None:
     websession.get = AsyncMock(side_effect=[MockResponse(status=401, reason="Unauthorized"), ok])
 
     assert await airthings._request("url") is ok
-    assert websession.get.await_args_list[-1].kwargs["headers"] == {"Authorization": "new"}
+    assert websession.get.await_args_list[-1].kwargs["headers"] == {"Authorization": "Bearer new"}
 
 
 @pytest.mark.asyncio
@@ -467,6 +755,7 @@ async def test_get_token_returns_access_token() -> None:
     websession.post = AsyncMock(return_value=token_response("abc"))
 
     assert await get_token(websession, "id", "secret") == "abc"
+    assert websession.post.await_args.args == ("https://accounts-api.airthings.com/v1/token",)
     assert websession.post.await_args.kwargs["data"] == {
         "grant_type": "client_credentials",
         "client_id": "id",

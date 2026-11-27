@@ -1,0 +1,426 @@
+{
+  "accounts": {
+    "accounts": [
+      {
+        "id": "00000000-0000-0000-0000-000000000001"
+      }
+    ]
+  },
+  "devices": {
+    "devices": [
+      {
+        "serialNumber": "4100000001",
+        "home": "Home",
+        "name": "Ap 1",
+        "type": "AP_1",
+        "productName": "Renew air purifier",
+        "sensors": [
+          "pm25"
+        ]
+      },
+      {
+        "serialNumber": "2810000002",
+        "home": "Home",
+        "name": "Hub",
+        "type": "HUB",
+        "productName": "Hub",
+        "sensors": []
+      },
+      {
+        "serialNumber": "3250000003",
+        "home": "Home",
+        "name": "Raven Radon",
+        "type": "RAVEN_RADON",
+        "productName": "Corentium Home 2",
+        "sensors": [
+          "radonShortTermAvg",
+          "radonLongTermAvg",
+          "humidity",
+          "temp"
+        ]
+      },
+      {
+        "serialNumber": "2960000004",
+        "home": "Home",
+        "name": "View Plus",
+        "type": "VIEW_PLUS",
+        "productName": "View Plus",
+        "sensors": [
+          "radonShortTermAvg",
+          "temp",
+          "humidity",
+          "pressure",
+          "co2",
+          "voc",
+          "pm1",
+          "pm25"
+        ]
+      },
+      {
+        "serialNumber": "2980000005",
+        "home": "Home",
+        "name": "View Pollution",
+        "type": "VIEW_POLLUTION",
+        "productName": "View Pollution",
+        "sensors": [
+          "temp",
+          "humidity",
+          "pm1",
+          "pm25"
+        ]
+      },
+      {
+        "serialNumber": "2900000006",
+        "home": "Home",
+        "name": "Wave",
+        "type": "WAVE",
+        "productName": "Wave",
+        "sensors": [
+          "radonShortTermAvg",
+          "temp",
+          "humidity"
+        ]
+      },
+      {
+        "serialNumber": "3210000007",
+        "home": "Home",
+        "name": "Wave Enhance",
+        "type": "WAVE_ENHANCE",
+        "productName": "Wave Enhance",
+        "sensors": [
+          "temp",
+          "humidity",
+          "co2",
+          "voc",
+          "sla",
+          "pressure",
+          "lux"
+        ]
+      },
+      {
+        "serialNumber": "2950000008",
+        "home": null,
+        "name": "Wave Gen2",
+        "type": "WAVE_GEN2",
+        "productName": "Wave",
+        "sensors": [
+          "radonShortTermAvg",
+          "temp",
+          "humidity"
+        ]
+      },
+      {
+        "serialNumber": "2920000009",
+        "home": "Home",
+        "name": "Wave Mini",
+        "type": "WAVE_MINI",
+        "productName": "Wave Mini",
+        "sensors": [
+          "temp",
+          "humidity",
+          "voc"
+        ]
+      },
+      {
+        "serialNumber": "2930000010",
+        "home": "Home",
+        "name": "Wave Plus",
+        "type": "WAVE_PLUS",
+        "productName": "Wave Plus",
+        "sensors": [
+          "radonShortTermAvg",
+          "temp",
+          "humidity",
+          "pressure",
+          "co2",
+          "voc"
+        ]
+      }
+    ]
+  },
+  "sensors": {
+    "results": [
+      {
+        "serialNumber": "4100000001",
+        "sensors": [
+          {
+            "sensorType": "pm25",
+            "value": 1.0,
+            "unit": "mgpc"
+          }
+        ],
+        "recorded": "2026-10-22T11:12:08",
+        "recordedAt": "2026-10-22T11:12:08Z",
+        "batteryPercentage": null
+      },
+      {
+        "serialNumber": "2810000002",
+        "sensors": [],
+        "recorded": null,
+        "recordedAt": null,
+        "batteryPercentage": null
+      },
+      {
+        "serialNumber": "3250000003",
+        "sensors": [
+          {
+            "sensorType": "radonShortTermAvg",
+            "value": 8.0,
+            "unit": "bq"
+          },
+          {
+            "sensorType": "radonLongTermAvg",
+            "value": 4.0,
+            "unit": "bq"
+          },
+          {
+            "sensorType": "humidity",
+            "value": 41.0,
+            "unit": "pct"
+          },
+          {
+            "sensorType": "temp",
+            "value": 27.0,
+            "unit": "c"
+          }
+        ],
+        "recorded": "2026-10-22T11:12:08",
+        "recordedAt": "2026-10-22T11:12:08Z",
+        "batteryPercentage": 62
+      },
+      {
+        "serialNumber": "2960000004",
+        "sensors": [
+          {
+            "sensorType": "radonShortTermAvg",
+            "value": 21.0,
+            "unit": "bq"
+          },
+          {
+            "sensorType": "humidity",
+            "value": 35.0,
+            "unit": "pct"
+          },
+          {
+            "sensorType": "temp",
+            "value": 25.1,
+            "unit": "c"
+          },
+          {
+            "sensorType": "co2",
+            "value": 531.0,
+            "unit": "ppm"
+          },
+          {
+            "sensorType": "voc",
+            "value": 101.0,
+            "unit": "ppb"
+          },
+          {
+            "sensorType": "pressure",
+            "value": 1008.0,
+            "unit": "mbar"
+          },
+          {
+            "sensorType": "pm25",
+            "value": 0.0,
+            "unit": "mgpc"
+          },
+          {
+            "sensorType": "pm1",
+            "value": 0.0,
+            "unit": "mgpc"
+          }
+        ],
+        "recorded": "2026-10-22T11:12:08",
+        "recordedAt": "2026-10-22T11:12:08Z",
+        "batteryPercentage": 0
+      },
+      {
+        "serialNumber": "2980000005",
+        "sensors": [
+          {
+            "sensorType": "humidity",
+            "value": 42.0,
+            "unit": "pct"
+          },
+          {
+            "sensorType": "temp",
+            "value": 24.0,
+            "unit": "c"
+          },
+          {
+            "sensorType": "pm25",
+            "value": 0.0,
+            "unit": "mgpc"
+          },
+          {
+            "sensorType": "pm1",
+            "value": 0.0,
+            "unit": "mgpc"
+          }
+        ],
+        "recorded": "2026-10-22T11:12:08",
+        "recordedAt": "2026-10-22T11:12:08Z",
+        "batteryPercentage": 50
+      },
+      {
+        "serialNumber": "2900000006",
+        "sensors": [
+          {
+            "sensorType": "radonShortTermAvg",
+            "value": 40.0,
+            "unit": "bq"
+          },
+          {
+            "sensorType": "humidity",
+            "value": 28.0,
+            "unit": "pct"
+          },
+          {
+            "sensorType": "temp",
+            "value": 22.2,
+            "unit": "c"
+          }
+        ],
+        "recorded": "2026-10-22T11:12:08",
+        "recordedAt": "2026-10-22T11:12:08Z",
+        "batteryPercentage": 37
+      },
+      {
+        "serialNumber": "3210000007",
+        "sensors": [
+          {
+            "sensorType": "humidity",
+            "value": 48.0,
+            "unit": "pct"
+          },
+          {
+            "sensorType": "temp",
+            "value": 21.9,
+            "unit": "c"
+          },
+          {
+            "sensorType": "co2",
+            "value": 697.0,
+            "unit": "ppm"
+          },
+          {
+            "sensorType": "voc",
+            "value": 198.0,
+            "unit": "ppb"
+          },
+          {
+            "sensorType": "pressure",
+            "value": 988.4,
+            "unit": "mbar"
+          },
+          {
+            "sensorType": "lux",
+            "value": 1.0,
+            "unit": "lx"
+          },
+          {
+            "sensorType": "sla",
+            "value": 38.0,
+            "unit": "dbspl"
+          }
+        ],
+        "recorded": "2026-10-22T11:12:08",
+        "recordedAt": "2026-10-22T11:12:08Z",
+        "batteryPercentage": 77
+      },
+      {
+        "serialNumber": "2950000008",
+        "sensors": [
+          {
+            "sensorType": "radonShortTermAvg",
+            "value": 167.0,
+            "unit": "bq"
+          },
+          {
+            "sensorType": "humidity",
+            "value": 76.0,
+            "unit": "pct"
+          },
+          {
+            "sensorType": "temp",
+            "value": 16.2,
+            "unit": "c"
+          }
+        ],
+        "recorded": "2026-10-22T11:12:08",
+        "recordedAt": "2026-10-22T11:12:08Z",
+        "batteryPercentage": 100
+      },
+      {
+        "serialNumber": "2920000009",
+        "sensors": [
+          {
+            "sensorType": "humidity",
+            "value": 52.0,
+            "unit": "pct"
+          },
+          {
+            "sensorType": "temp",
+            "value": 23.6,
+            "unit": "c"
+          },
+          {
+            "sensorType": "voc",
+            "value": 125.0,
+            "unit": "ppb"
+          },
+          {
+            "sensorType": "mold",
+            "value": 1.0,
+            "unit": "riskIndex"
+          }
+        ],
+        "recorded": "2026-10-22T11:12:08",
+        "recordedAt": "2026-10-22T11:12:08Z",
+        "batteryPercentage": 0
+      },
+      {
+        "serialNumber": "2930000010",
+        "sensors": [
+          {
+            "sensorType": "radonShortTermAvg",
+            "value": 8.0,
+            "unit": "bq"
+          },
+          {
+            "sensorType": "humidity",
+            "value": 42.0,
+            "unit": "pct"
+          },
+          {
+            "sensorType": "temp",
+            "value": 24.0,
+            "unit": "c"
+          },
+          {
+            "sensorType": "co2",
+            "value": 885.0,
+            "unit": "ppm"
+          },
+          {
+            "sensorType": "voc",
+            "value": 46.0,
+            "unit": "ppb"
+          },
+          {
+            "sensorType": "pressure",
+            "value": 990.3,
+            "unit": "mbar"
+          }
+        ],
+        "recorded": "2026-10-22T11:12:08",
+        "recordedAt": "2026-10-22T11:12:08Z",
+        "batteryPercentage": 77
+      }
+    ],
+    "hasNext": false,
+    "totalPages": 1
+  }
+}

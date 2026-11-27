@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+from datetime import UTC, datetime
 import json
 import logging
 import time
@@ -15,6 +16,18 @@ API_URL = "https://consumer-api.airthings.com/v1/"
 TIMEOUT = 10
 CACHE_TTL = 3600
 MAX_PAGES = 100
+
+
+def _parse_timestamp(value) -> datetime | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        timestamp = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    if timestamp.tzinfo is None:
+        timestamp = timestamp.replace(tzinfo=UTC)
+    return timestamp
 
 
 @dataclass
@@ -42,6 +55,7 @@ class AirthingsDevice:
     location_name: str
     device_type: str | None
     product_name: str | None
+    recorded: datetime | None = None
 
     @classmethod
     def init_from_response(cls, response, location_name, device):
@@ -61,6 +75,7 @@ class AirthingsDevice:
             location_name,
             device.get("type"),
             device.get("productName"),
+            _parse_timestamp(response.get("recordedAt")) or _parse_timestamp(response.get("recorded")),
         )
 
     @property

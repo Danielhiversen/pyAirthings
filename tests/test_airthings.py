@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime, timedelta, timezone
 import json
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -171,6 +172,7 @@ async def test_update_devices_returns_device_data() -> None:
             location_name="Home",
             device_type="WAVE_PLUS",
             product_name="Wave Plus",
+            recorded=datetime(2026, 10, 22, 11, 12, 8, tzinfo=UTC),
         )
     }
     assert list(result["2930000001"].sensor_types) == ["temp", "battery"]
@@ -307,7 +309,7 @@ async def test_update_devices_returns_device_without_readings() -> None:
 
     device = (await airthings.update_devices())["2930000001"]
 
-    assert (device.name, device.sensors) == ("Kitchen", {})
+    assert (device.name, device.sensors, device.recorded) == ("Kitchen", {}, None)
 
 
 @pytest.mark.asyncio
@@ -658,9 +660,24 @@ def test_device_product_name(device: dict, expected: str | None) -> None:
     assert result.product_name == expected
 
 
-def test_device_without_metadata_or_readings() -> None:
-    device = AirthingsDevice.init_from_response({"serialNumber": "1", "batteryPercentage": None}, "", {})
+@pytest.mark.parametrize(
+    ("recorded", "expected"),
+    [
+        ("2026-10-22T11:12:08", datetime(2026, 10, 22, 11, 12, 8, tzinfo=UTC)),
+        (
+            "2026-10-22T13:12:08+02:00",
+            datetime(2026, 10, 22, 13, 12, 8, tzinfo=timezone(timedelta(hours=2))),
+        ),
+        ("yesterday", None),
+        (None, None),
+    ],
+)
+def test_device_recorded(recorded: str | None, expected: datetime | None) -> None:
+    device = AirthingsDevice.init_from_response(
+        {"serialNumber": "1", "recorded": recorded, "batteryPercentage": None}, "", {}
+    )
 
+    assert device.recorded == expected
     assert device.sensors == {}
     assert device.name == "1"
 
@@ -799,3 +816,25 @@ async def test_get_token_raises_auth_error(response: MockResponse) -> None:
 
     with pytest.raises(AirthingsAuthError):
         await get_token(websession, "id", "secret")
+
+
+@pytest.mark.parametrize(
+    ("sample", "expected"),
+    [
+        ({"recordedAt": "2026-10-22T11:12:08Z"}, datetime(2026, 10, 22, 11, 12, 8, tzinfo=UTC)),
+        (
+            {"recordedAt": "2026-10-22T11:12:08Z", "recorded": "2026-10-22T09:00:00"},
+            datetime(2026, 10, 22, 11, 12, 8, tzinfo=UTC),
+        ),
+        (
+            {"recordedAt": "not a time", "recorded": "2026-10-22T09:00:00"},
+            datetime(2026, 10, 22, 9, 0, 0, tzinfo=UTC),
+        ),
+        ({"recordedAt": None, "recorded": "2026-10-22T09:00:00"}, datetime(2026, 10, 22, 9, 0, 0, tzinfo=UTC)),
+        ({"recordedAt": None, "recorded": None}, None),
+    ],
+)
+def test_device_recorded_at(sample: dict, expected: datetime | None) -> None:
+    device = AirthingsDevice.init_from_response({"serialNumber": "1"} | sample, "", {})
+
+    assert device.recorded == expected

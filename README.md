@@ -1,7 +1,7 @@
 # pyAirthings
 Python library for the [Airthings Consumer API](https://consumer-api-doc.airthings.com/).
 
-Create an API client at https://dashboard.airthings.com/integrations/api-integration and use its id and secret:
+Create an API client at https://consumer-api-doc.airthings.com/dashboard and use its id and secret:
 
 ```python
 import asyncio

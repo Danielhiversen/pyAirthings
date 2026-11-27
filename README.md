@@ -4,12 +4,21 @@ Python library for the [Airthings Consumer API](https://consumer-api-doc.airthin
 Create an API client at https://dashboard.airthings.com/integrations/api-integration and use its id and secret:
 
 ```python
+import asyncio
+
 import aiohttp
 from airthings import Airthings
 
-async with aiohttp.ClientSession() as session:
-    airthings = Airthings(client_id, secret, session)
-    devices = await airthings.update_devices()
+
+async def main():
+    async with aiohttp.ClientSession() as session:
+        airthings = Airthings("client_id", "secret", session)
+        devices = await airthings.update_devices()
+    for serial_number, device in devices.items():
+        print(serial_number, device.name, device.sensors)
+
+
+asyncio.run(main())
 ```
 
 `update_devices()` returns the devices on the account that have sensors, keyed by serial number, with the latest sensor values.
